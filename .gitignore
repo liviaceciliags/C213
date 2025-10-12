@@ -1,0 +1,21 @@
+# Arquivos de Sistema e Ambiente (Manter o Código Limpo)
+
+# Python Bytecode e Cache
+__pycache__/
+*.pyc
+
+# Ambientes Virtuais
+venv/
+.venv/
+env/
+
+# Arquivos de IDEs (VS Code) e Sistema
+.vscode/
+.DS_Store
+
+# Resultados de Simulação e Exportação
+# Ignora arquivos gerados pela aplicação e logs.
+*.log
+*.png
+*.jpg
+*.jpeg
