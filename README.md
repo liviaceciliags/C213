@@ -2,7 +2,7 @@
 
 ## 1. Visão Geral do Projeto
 
-Este projeto, desenvolvido para a disciplina **Sistemas de Controle Automático (C213)**, consiste no desenvolvimento de uma aplicação computacional completa para **modelar, sintonizar e simular um controlador PID** em um processo industrial.
+Este projeto, desenvolvido para a disciplina **Sistemas de Controle Automático (Sistemas Embarcados) (C213)**, consiste no desenvolvimento de uma aplicação computacional completa para **modelar, sintonizar e simular um controlador PID** em um processo industrial.
 
 O objetivo é integrar a **teoria de controle clássico** com **habilidades práticas de programação**, aplicando conceitos de identificação de sistemas e sintonia de controladores.
 
