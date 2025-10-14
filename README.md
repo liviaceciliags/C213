@@ -44,6 +44,18 @@ python main.py
 
 ---
 
+### Arquivo: `Código_Trabalho_C213.ipynb` presente na pasta PROJETO_C213
+
+Este notebook contém toda a implementação e análise do **Projeto C213 – Identificação de Sistemas e Controle PID**.  
+Ele foi desenvolvido em Python e reúne os principais algoritmos utilizados na etapa de modelagem e sintonia do controlador.
+
+Possui leitura dos dados experimentais, identificação do modelo FOPDT, sintonia pelos métodos CHR e ITAE, simulação em malha fechada e comparação dos resultados para avaliar desempenho e estabilidade do sistema.
+
+#### Objetivo do notebook:
+Servir como base analítica para o desenvolvimento da aplicação com interface gráfica (PyQt5), permitindo validar e comparar os resultados antes da integração final no software completo.
+
+---
+
 ## 4. Funcionalidades de Engenharia Implementadas
 
 ### 4.1 Algoritmos Implementados
@@ -60,6 +72,8 @@ Os métodos usados foram:
 • **Sundaresan & Krishnaswamy** → usa 35,3% e 85,3%.
 
 O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais representativo.
+
+---
 
 ### 4.2. Aba de Identificação de Sistemas
 
@@ -94,7 +108,7 @@ O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais repre
 
 ---
 
-### 📊 Conclusão
+### Conclusão
 
 A análise comparativa demonstra os **trade-offs entre os métodos de sintonia PID**:
 
