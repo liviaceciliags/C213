@@ -44,7 +44,7 @@ python main.py
 
 ---
 
-### Arquivo: `Código_Trabalho_C213.ipynb` presente na pasta PROJETO_C213
+### 4. Arquivo: `Código_Trabalho_C213.ipynb` presente na pasta PROJETO_C213
 
 Este notebook contém toda a implementação e análise do **Projeto C213 – Identificação de Sistemas e Controle PID**.  
 Ele foi desenvolvido em Python e reúne os principais algoritmos utilizados na etapa de modelagem e sintonia do controlador.
@@ -56,9 +56,9 @@ Servir como base analítica para o desenvolvimento da aplicação com interface 
 
 ---
 
-## 4. Funcionalidades de Engenharia Implementadas
+## 5. Funcionalidades de Engenharia Implementadas
 
-### 4.1 Algoritmos Implementados
+### 5.1 Algoritmos Implementados
 O sistema foi identificado como FOPDT, cuja função de transferência é:
 
 $$
@@ -75,28 +75,38 @@ O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais repre
 
 ---
 
-### 4.2. Aba de Identificação de Sistemas
+### 5.2. Aba de Identificação de Sistemas
 
 - **Carregamento de Dados:** Permite carregar arquivos `.mat` com dados experimentais.  
 - **Identificação FOPDT:** Implementação dos métodos *Smith* e *Sundaresan & Krishnaswamy*, com cálculo dos parâmetros \( k, 	au, 	heta \).  
 - **Seleção de Modelo:** O modelo com menor EQM (RMSE) é selecionado automaticamente.  
 - **Visualização:** Exibição da curva de reação (experimental) e do modelo FOPDT sobreposto.  
-- **Exportação:** Função para salvar o gráfico como imagem.  
+- **Exportação:** Função para salvar o gráfico como imagem.
 
+  <img width="1366" height="719" alt="image" src="https://github.com/user-attachments/assets/b7c6bd70-fd6f-46d9-b38e-17de1c59a614" />
+  
 ---
 
-### 4.3. Aba de Controle PID
+### 5.3. Aba de Controle PID
 
 - **Modos de Sintonia:** Suporta Sintonia Automática (método CHR e ITAE) e Sintonia Manual (ajuste fino de \( K_p, T_i, T_d \)).  
 - **Métodos de Sintonia (Grupo 3):** Implementação obrigatória do **CHR com Sobressinal** e do **método ITAE**.  
 - **Simulação:** Simulação da resposta do sistema em malha fechada (resposta ao degrau).  
 - **Métricas de Desempenho:** Cálculo automático de \( t_r \), \( t_s \), \( M_p \) e \( e_{ss} \).  
 - **Visualização:** Gráficos interativos com marcadores visuais para *SetPoint* e *Overshoot*.
-- **Sintonia Manual:** Permite testar livremente Kp, Ti e Td, observando diretamente os efeitos no comportamento do sistema. 
+- **Sintonia Manual:** Permite testar livremente Kp, Ti e Td, observando diretamente os efeitos no comportamento do sistema.
 
 ---
 
-## 5. Análise de Desempenho (Resultados do Grupo 3)
+<img width="1364" height="719" alt="image" src="https://github.com/user-attachments/assets/3c026424-f34b-4988-8d88-f491c6dc3f11" />
+
+---
+
+<img width="1366" height="720" alt="image" src="https://github.com/user-attachments/assets/2aa0860a-5eee-433d-8ed2-6428e361a8bb" />
+
+---
+
+## 6. Análise de Desempenho (Resultados do Grupo 3)
 
 | Métrica | Ziegler-Nichols MA | CHR c/ Sobressinal | ITAE |
 | :--- | :--- | :--- | :--- |
@@ -108,7 +118,7 @@ O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais repre
 
 ---
 
-### Conclusão
+### 7. Conclusão
 
 A análise comparativa demonstra os **trade-offs entre os métodos de sintonia PID**:
 
@@ -118,7 +128,7 @@ A análise comparativa demonstra os **trade-offs entre os métodos de sintonia P
 
 ---
 
-### Limitações e Melhorias Futuras
+### 8. Limitações e Melhorias Futuras
 
 O projeto cumpre os requisitos propostos, mas o modelo **FOPDT** é uma simplificação e as sintonias não são adaptativas.  
 Como melhorias futuras, sugerem-se:
@@ -129,7 +139,7 @@ Como melhorias futuras, sugerem-se:
 
 ---
 
-## 6. Autoria
+## 9. Autoria
 
 - **Disciplina:** C213 - Sistemas Embarcados  
 - **Grupo:** 3  
