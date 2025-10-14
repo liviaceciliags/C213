@@ -2,7 +2,7 @@
 
 ## 1. Visão Geral do Projeto
 
-Este projeto, desenvolvido para a disciplina **Sistemas de Controle Automático (C213)**, consiste no desenvolvimento de uma aplicação computacional completa para **modelar, sintonizar e simular um controlador PID** em um processo industrial.
+Este projeto, desenvolvido para a disciplina **Sistemas Embarcados (C213)**, consiste no desenvolvimento de uma aplicação computacional completa para **modelar, sintonizar e simular um controlador PID** em um processo industrial.
 
 O objetivo é integrar a **teoria de controle clássico** com **habilidades práticas de programação**, aplicando conceitos de identificação de sistemas e sintonia de controladores.
 
@@ -46,7 +46,22 @@ python main.py
 
 ## 4. Funcionalidades de Engenharia Implementadas
 
-### 4.1. Aba de Identificação de Sistemas
+### 4.1 Algoritmos Implementados
+O sistema foi identificado como FOPDT, cuja função de transferência é:
+
+$$
+G(s) = \frac{k \, e^{-\theta s}}{\tau s + 1}
+$$
+
+Os métodos usados foram:
+
+• **Smith**→ utiliza os tempos em que a resposta atinge 28,3% e 63,2% da variação final.
+
+• **Sundaresan & Krishnaswamy** → usa 35,3% e 85,3%.
+
+O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais representativo.
+
+### 4.2. Aba de Identificação de Sistemas
 
 - **Carregamento de Dados:** Permite carregar arquivos `.mat` com dados experimentais.  
 - **Identificação FOPDT:** Implementação dos métodos *Smith* e *Sundaresan & Krishnaswamy*, com cálculo dos parâmetros \( k, 	au, 	heta \).  
@@ -56,13 +71,14 @@ python main.py
 
 ---
 
-### 4.2. Aba de Controle PID
+### 4.3. Aba de Controle PID
 
 - **Modos de Sintonia:** Suporta Sintonia Automática (método CHR e ITAE) e Sintonia Manual (ajuste fino de \( K_p, T_i, T_d \)).  
 - **Métodos de Sintonia (Grupo 3):** Implementação obrigatória do **CHR com Sobressinal** e do **método ITAE**.  
 - **Simulação:** Simulação da resposta do sistema em malha fechada (resposta ao degrau).  
 - **Métricas de Desempenho:** Cálculo automático de \( t_r \), \( t_s \), \( M_p \) e \( e_{ss} \).  
-- **Visualização:** Gráficos interativos com marcadores visuais para *SetPoint* e *Overshoot*.  
+- **Visualização:** Gráficos interativos com marcadores visuais para *SetPoint* e *Overshoot*.
+- **Sintonia Manual:** Permite testar livremente Kp, Ti e Td, observando diretamente os efeitos no comportamento do sistema. 
 
 ---
 
@@ -88,11 +104,25 @@ A análise comparativa demonstra os **trade-offs entre os métodos de sintonia P
 
 ---
 
+### Limitações e Melhorias Futuras
+
+O projeto cumpre os requisitos propostos, mas o modelo **FOPDT** é uma simplificação e as sintonias não são adaptativas.  
+Como melhorias futuras, sugerem-se:
+
+- Implementar **sintonia adaptativa** em tempo real;  
+- Adicionar novos métodos de controle, como **IMC**;  
+- Integrar o sistema com **hardware real**, permitindo testes práticos e validação experimental.
+
+---
+
 ## 6. Autoria
 
-- **Disciplina:** C213 - Sistemas de Controle Automático  
+- **Disciplina:** C213 - Sistemas Embarcados  
 - **Grupo:** 3  
 - **Membros:** Lara Conte Gomes e Lívia Cecília Gomes Silva 
 - **Link do Repositório:** [\[INSERIR LINK DO GITHUB\]](https://github.com/liviaceciliags/C213.git)
+
+  
+Instituto Nacional de Telecomunicações – Inatel
 
 ---
