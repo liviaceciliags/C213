@@ -43,7 +43,12 @@ class MainController:
         
         # Lógica de interface para alternância de modos
         self.view.control_tab.radio_method.toggled.connect(self.toggle_tuning_mode)
+        
+        # Recalcula o PID automaticamente ao mudar o método
         self.view.control_tab.cb_tuning_method.currentTextChanged.connect(self.handle_method_change)
+        
+        # Conecta a mudança do valor de Lambda (λ) ao recálculo do PID
+        self.view.control_tab.le_lambda.valueChanged.connect(self.run_tuning_calculation_action)
         
         # Reseta as métricas ao mudar o SetPoint para forçar uma nova simulação
         self.view.control_tab.le_setpoint.valueChanged.connect(self.view.control_tab.clear_metrics)
@@ -51,7 +56,6 @@ class MainController:
         # Configuração inicial para garantir o estado correto da IHM
         self.toggle_tuning_mode(self.view.control_tab.radio_method.isChecked())
         self.handle_method_change(self.view.control_tab.cb_tuning_method.currentText())
-
 
     # -------------------------------------------------------------------------
     # --- Métodos de Identificação de Sistemas ---
@@ -119,7 +123,6 @@ class MainController:
              QMessageBox.critical(self.view, "Erro de Identificação", "Os dados não permitiram um modelo FOPDT válido (k, tau ou theta inválido).")
              self.view.control_tab.setEnabled(False)
              self.view.identification_tab.clear_results()
-
 
     def plot_identification_data(self, t_exp, y_exp, t_model=None, y_model=None, method_id="", clear_model=False):
         """Função genérica de plotagem para a aba de Identificação."""
@@ -206,58 +209,132 @@ class MainController:
             if self.view.control_tab.radio_method.isChecked():
                 QMessageBox.warning(self.view, "Aviso", "Parâmetros FOPDT inválidos. A sintonia automática não pode ser calculada.")
 
-
     def run_tuning_simulation_action(self):
-        """Executa a simulação em malha fechada e exibe o desempenho do controlador."""
+        """
+        Executa a simulação em malha fechada do sistema e exibe o desempenho do controlador.
         
+        Esta função lê os parâmetros PID da IHM (seja por sintonia automática ou manual),
+        chama o Model para realizar a simulação e atualiza o gráfico com SetPoint e Overhoot.
+        """
+        
+        # Lê o SetPoint (valor de referência) da interface
         setpoint = self.view.control_tab.le_setpoint.value()
         
+        # Garante que o modelo FOPDT foi identificado e é válido antes de prosseguir
         if not np.isfinite(self.model.k) or not np.isfinite(self.model.tau):
             QMessageBox.warning(self.view, "Aviso", "Identifique o modelo FOPDT na primeira aba antes de simular.")
             return
 
-        # Lê os parâmetros do controlador diretamente da IHM (garante o uso de valores manuais, se aplicável)
+        # Lê os parâmetros Kp, Ti, e Td diretamente da interface (os valores visíveis na caixa)
         Kp = self.view.control_tab.le_kp.value()
         Ti = self.view.control_tab.le_ti.value()
         Td = self.view.control_tab.le_td.value()
         
-        # Chama a simulação do sistema controlado
+        # Chama a lógica de simulação do Model
         t_sim, y_cl, metrics = self.model.simulate_closed_loop(setpoint, Kp, Ti, Td)
         
+        # Limpa os campos de métricas antes de exibir os novos resultados (necessário para resetar '---')
         self.view.control_tab.clear_metrics() 
 
-        # 3. Atualiza a interface com os resultados
+        # Atualiza a interface com os resultados
         if y_cl is not None and not np.any(np.isnan(y_cl)):
-            # Atualiza Gráfico
             plot = self.view.control_tab.plot_widget.plotItem
             plot.clear()
+            
+            # --- 1. PLOTAGEM PRINCIPAL E CONFIGURAÇÃO DA LEGENDA ---
+            
+            # CRIAÇÃO DA LEGENDA NA POSIÇÃO INFERIOR DIREITA
+            plot.addLegend(offset=(-1, -1)) 
+            
+            # Curva de Resposta PID (Linha Principal)
             plot.plot(self.model.t, y_cl, pen=pg.mkPen('k', width=2), name='Resposta PID')
             
-            # Linha de SetPoint (Horizontal, cor azul)
-            setpoint_line = pg.InfiniteLine(pos=setpoint, angle=0, pen=pg.mkPen('b', width=1, style=Qt.DashLine), name='SetPoint')
+            # Linha de SetPoint (Horizontal, cor azul tracejada) - MARCADOR VISUAL
+            setpoint_pen = pg.mkPen('b', width=1, style=Qt.DashLine)
+            setpoint_line = pg.InfiniteLine(pos=setpoint, angle=0, pen=setpoint_pen)
             plot.addItem(setpoint_line)
+            # Item da Legenda AZUL (SetPoint)
+            plot.plot([], [], pen=setpoint_pen, name='SetPoint (SP)')
+
+            # Linha de Overshoot (Mp) e Marcadores
+            Mp_value = np.max(y_cl)
             
-            # Linha de Overshoot (Mp)
-            Mp_value = setpoint * (1 + metrics['Mp'] / 100.0)
-            
-            # Plota a linha de overshoot (vermelha pontilhada)
-            if metrics['Mp'] > 0.01: 
-                overshoot_line = pg.InfiniteLine(pos=Mp_value, angle=0, pen=pg.mkPen('r', width=1, style=Qt.DotLine), name=f'Mp ({metrics["Mp"]:.2f}%)')
+            # --- MARCADOR: PICO (Mp) ---
+            if metrics['Mp'] > 0.01:
+                overshoot_pen_style = pg.mkPen('r', width=1, style=Qt.DotLine)
+                overshoot_color = 'r'
+                
+                overshoot_line = pg.InfiniteLine(pos=Mp_value, angle=0, pen=overshoot_pen_style)
                 plot.addItem(overshoot_line)
+                
+                t_peak_idx = np.argmax(y_cl)
+                t_peak = self.model.t[t_peak_idx]
+                
+                # ADIÇÃO DO PONTO (Bolinha) no Pico
+                plot.plot([t_peak], [Mp_value], 
+                    symbol='o',  
+                    symbolSize=8, 
+                    symbolPen=pg.mkPen(overshoot_color, width=2), 
+                    symbolBrush=overshoot_color, 
+                    name=None 
+                )
+
+                # Anotação de texto (Pico/Overshoot)
+                text_mp = pg.TextItem(
+                    html=f'<div style="text-align: center; color: red;">Pico: {Mp_value:.2f}</div>', 
+                    anchor=(0.5, 1.5)
+                )
+                plot.addItem(text_mp)
+                text_mp.setPos(t_peak, Mp_value)
+                
+                # Item da Legenda VERMELHA
+                plot.plot([], [], pen=overshoot_pen_style, name=f'Overshoot (Mp = {metrics["Mp"]:.2f}%)')
             
-            plot.addLegend()
+            # --- MARCADOR: TEMPO DE ACOMODAÇÃO (ts) ---
+            if np.isfinite(metrics['ts']):
+                ts_pen_style = pg.mkPen('g', width=1, style=Qt.DotLine)
+                ts_color = 'g'
+                
+                ts_line = pg.InfiniteLine(
+                    pos=metrics['ts'], 
+                    angle=90, # Linha vertical
+                    pen=ts_pen_style
+                )
+                plot.addItem(ts_line)
+                
+                # ADIÇÃO DO PONTO no Tempo de Acomodação
+                plot.plot([metrics['ts']], [setpoint], 
+                    symbol='o', 
+                    symbolSize=8, 
+                    symbolPen=pg.mkPen(ts_color, width=2), 
+                    symbolBrush=ts_color, 
+                    name=None
+                )
+                
+                # Anotação de texto (Tempo de Acomodação)
+                text_ts = pg.TextItem(
+                    html=f'<div style="text-align: center; color: green;">ts: {metrics["ts"]:.2f}s</div>', 
+                    anchor=(0.5, 0)
+                )
+                plot.addItem(text_ts)
+                text_ts.setPos(metrics['ts'], setpoint) 
+
             plot.setTitle(f"Resposta PID (Kp={Kp:.3g}, Ti={Ti:.3g}, Td={Td:.3g})")
             
-            # Habilita exportação e atualiza métricas
+            def format_metric(value, unit=""):
+                """Formata o valor ou retorna '---' se for NaN."""
+                return f"{value:.3f} {unit}" if np.isfinite(value) else f"--- {unit}"
+
             self.view.control_tab.btn_export_graph.setEnabled(True)
-            self.view.control_tab.le_tr.setText(f"{metrics['tr']:.3f} s")
-            self.view.control_tab.le_ts.setText(f"{metrics['ts']:.3f} s")
-            self.view.control_tab.le_mp.setText(f"{metrics['Mp']:.2f} %")
-            self.view.control_tab.le_ess.setText(f"{metrics['ess']:.3f}")
+            self.view.control_tab.le_tr.setText(format_metric(metrics['tr'], "s"))
+            self.view.control_tab.le_ts.setText(format_metric(metrics['ts'], "s"))
+            self.view.control_tab.le_mp.setText(format_metric(metrics['Mp'], "%"))
+            self.view.control_tab.le_ess.setText(format_metric(metrics['ess']))
         else:
+            # Tratamento de erro para simulações instáveis
             self.view.control_tab.btn_export_graph.setEnabled(False)
             QMessageBox.critical(self.view, "Erro de Simulação", "O controlador é instável ou os parâmetros (Ti, k, tau) são inválidos.")
-
+    
     # -------------------------------------------------------------------------
     # --- Ações de Exportação ---
     # -------------------------------------------------------------------------
