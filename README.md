@@ -83,7 +83,7 @@ O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais repre
 - **Visualização:** Exibição da curva de reação (experimental) e do modelo FOPDT sobreposto.  
 - **Exportação:** Função para salvar o gráfico como imagem.
 
-  <img width="1366" height="719" alt="image" src="https://github.com/user-attachments/assets/b7c6bd70-fd6f-46d9-b38e-17de1c59a614" />
+<img width="1366" height="720" alt="image" src="https://github.com/user-attachments/assets/cd8b8317-91d7-40cf-bf65-2be53ef766e8" />
   
 ---
 
@@ -103,6 +103,22 @@ O modelo com menor erro médio quadrático (RMSE) é escolhido como o mais repre
 ---
 
 <img width="1366" height="720" alt="image" src="https://github.com/user-attachments/assets/2aa0860a-5eee-433d-8ed2-6428e361a8bb" />
+
+---
+
+OBS: Para que seja gerado o sobresinal no gráfico do CHR, alterar o seguinte trecho de código:
+
+---
+
+<img width="745" height="239" alt="image" src="https://github.com/user-attachments/assets/6b09601e-57bd-418a-845a-4303f34faf9b" />
+
+---
+
+Altere `def __init__(self, pade_id: int = 10, pade_cl: int = 1): `, colocando **pade_cl: int = 10**. 
+
+---
+
+<img width="1365" height="720" alt="image" src="https://github.com/user-attachments/assets/58559377-f84d-465e-ba6f-2f138876506a" />
 
 ---
 
