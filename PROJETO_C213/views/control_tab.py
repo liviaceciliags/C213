@@ -138,6 +138,6 @@ class ControlTab(QWidget):
     def clear_tuning_fields(self):
         """Limpa e define valores padrão para os campos Kp, Ti, Td, Lambda no modo Manual."""
         self.le_kp.setValue(0.0)
-        self.le_ti.setValue(0.01) # Ti é inicializado ligeiramente acima de zero para evitar divisão por zero no Gc(s)
+        self.le_ti.setValue(0.0) # Ti é inicializado ligeiramente acima de zero para evitar divisão por zero no Gc(s)
         self.le_td.setValue(0.0)
-        self.le_lambda.setValue(1.0)
+        self.le_lambda.setValue(0.0)

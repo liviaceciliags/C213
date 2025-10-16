@@ -5,316 +5,359 @@ from control import tf, feedback, step_response, pade
 class PIDModel:
     """
     Model (Camada M - Modelo).
-    
-    Encapsula toda a lógica de cálculo do projeto: carregamento de dados, 
-    identificação FOPDT, regras de sintonia PID e simulação em malha fechada.
+    Carrega dados, identifica FOPDT, calcula sintonias e simula respostas.
     """
-    
-    def __init__(self):
-        """Inicializa os parâmetros do modelo FOPDT e variáveis de estado."""
-        # Parâmetros FOPDT, inicializados com np.nan para manipulação segura por funções NumPy
+
+    def __init__(self, pade_id: int = 10, pade_cl: int = 1):
+        # Parâmetros FOPDT
         self.k, self.tau, self.theta = np.nan, np.nan, np.nan
-        
-        # Armazena os dados brutos e parâmetros derivados da curva de reação
+
+        # Dados experimentais e derivados
         self.t, self.u, self.y = None, None, None
-        self.y0, self.du = np.nan, np.nan  # y0: nível inicial; du: magnitude do degrau
-        self.den_norm = np.nan            # dy: variação total da saída (y1 - y0)
-        self.method_id = "N/A"            # Método de identificação vencedor (Smith ou Sundaresan)
-        
-        # Parâmetros do controlador PID (último valor calculado ou manual)
+        self.y0, self.du = np.nan, np.nan      # nível inicial e degrau da entrada
+        self.den_norm = np.nan                 # dy = y1 - y0
+        self.method_id = "N/A"
+
+        # Ordem do Padé (identificação/aberta e fechada)
+        self.pade_order_id = pade_id           # p/ identificação e malha aberta (10)
+        self.pade_order_cl = pade_cl           # p/ malha fechada (1 - igual ao Colab)
+
+        # Últimos parâmetros PID
         self.Kp, self.Ti, self.Td = 0.0, 0.0, 0.0
-        
-        # Constantes das correlações ITAE para sintonia (minimiza erro em trânsito)
+
+        # Constantes ITAE
         self.ITAE_CONST = [0.965, -0.85, 0.796, -0.147, 0.308, 0.929]
-        
-    # --- Funções Auxiliares de Identificação e Simulação ---
-    
-    def _time_at_norm(self, percent):
-        """Calcula o tempo (t) em que a resposta normalizada atinge uma dada porcentagem (%)."""
-        if self.t is None or not np.isfinite(self.den_norm) or abs(self.den_norm) < 1e-12:
+
+    # -------------------------------------------------------------------------
+    # Utilidades
+    # -------------------------------------------------------------------------
+    def _time_at_norm(self, percent: float):
+        """Retorna o tempo em que (y - y0)/(y1 - y0) atinge 'percent'."""
+        if self.t is None or not np.isfinite(self.den_norm) or abs(self.den_norm) < 1e-9:
             return np.nan
-        
-        # Normalização da saída para faixa [0, 1]
         y_norm = (self.y - self.y0) / self.den_norm
-        
-        # Encontra o primeiro índice de tempo que atinge ou excede o percentual
-        id = np.where(y_norm >= percent)[0]
+        idx = np.where(y_norm >= percent)[0]
+        return self.t[idx[0]] if len(idx) else np.nan
 
-        if len(id) > 0:
-            return self.t[id[0]]
-        else:
-            return np.nan
-
-    def _simulate_fopdt(self, k, tau, theta, t_data, y0, du):
-        """Simula a resposta da planta FOPDT G(s) = k/(tau*s + 1) * e^(-theta*s)."""
-        
-        # Validação da estabilidade e causalidade do modelo
+    def _simulate_fopdt(self, k, tau, theta, t_data, y0):
+        """
+        Simula Gp(s) = (k/(tau*s+1))*e^{-theta s} para passo unitário.
+        Saída com DC correto: y0 + dy*(y_step/k).
+        """
         if not (np.isfinite(k) and np.isfinite(tau) and np.isfinite(theta)) or tau <= 0 or theta < 0:
             return np.full_like(t_data, np.nan, dtype=float)
-            
-        # Função de Transferência de Primeira Ordem
+
         G = tf([k], [tau, 1])
+        nd, dd = pade(theta, self.pade_order_id)            # Padé da IDENTIFICAÇÃO (10)
+        Gp = G * tf(nd, dd)
 
-        # Aproximação de Padé de 1ª ordem para o termo de atraso de transporte
-        nd, dd = pade(theta, 1) 
-        Gd = tf(nd, dd)
-        
-        # Planta completa Gp(s)
-        Gp = G * Gd
-        
-        # Simulação da resposta ao degrau unitário
-        t_sim, y_step = step_response(Gp, T=t_data)
-        
-        # Escala e desloca a resposta para o degrau real (du) e nível inicial (y0)
-        y_hat = y0 + du * y_step
+        _, y_step = step_response(Gp, T=t_data)             # passo unitário → final = k
+        if abs(k) < 1e-12 or not np.isfinite(self.den_norm):
+            return np.full_like(t_data, np.nan, dtype=float)
 
-        return y_hat
+        # Força platô igual ao experimental: y0 + dy
+        return y0 + (self.den_norm) * (y_step / k)
 
     def _rmse(self, y_true, y_hat):
-        """Calcula o Erro Quadrático Médio da Raiz (RMSE), usado como EQM."""
-        if np.isnan(y_hat).any() or len(y_true) != len(y_hat):
+        if y_hat is None or np.isnan(y_hat).any() or len(y_true) != len(y_hat):
             return np.inf
-
-        erro = y_true - y_hat
-        # Fórmula: sqrt(sum(erro^2) / n)
-        return np.sqrt(np.mean(erro**2))
+        e = y_true - y_hat
+        return np.sqrt(np.mean(e**2))
 
     def _get_pid_tf(self):
-        """Monta a Função de Transferência do Controlador PID na forma paralela."""
+        """PID paralelo: (Kp*Td*s^2 + Kp*s + Kp/Ti) / s"""
         Kp, Ti, Td = self.Kp, self.Ti, self.Td
-        
         if (not np.isfinite(Kp)) or (not np.isfinite(Ti)) or (not np.isfinite(Td)):
             return tf([0], [1])
-            
-        # Condição para evitar singularidade e controlador nulo
         if Ti <= 0 or (Kp == 0.0 and Ti == 0.0 and Td == 0.0):
-             return tf([0], [1]) 
-
-        # Gc(s) = Kp + Ki/s + Kd*s  =>  (Kp*Td*s^2 + Kp*s + Kp/Ti) / s
+            return tf([0], [1])
         num = [Kp * Td, Kp, Kp / Ti]
         den = [1, 0]
         return tf(num, den)
 
-    # --- Métodos Públicos (Ações Principais) ---
-
+    # -------------------------------------------------------------------------
+    # Carregamento e Identificação
+    # -------------------------------------------------------------------------
     def load_data(self, filepath):
-        """Carrega dados da curva de reação do arquivo .mat e calcula o ganho estático (k)."""
-        try:
-            data = sio.loadmat(filepath)
-            self.t = np.ravel(data['tiempo'])
-            self.u = np.ravel(data['entrada'])
-            self.y = np.ravel(data['salida'])
-            
-            # Determinação dos níveis de entrada e saída
-            u0, u1 = np.mean(self.u[:50]), np.mean(self.u[-50:])
-            self.y0, y1 = np.mean(self.y[:50]), np.mean(self.y[-50:])
-            
-            du_raw = (u1 - u0)
-            self.du = du_raw if abs(du_raw) > 1e-12 else float(np.mean(self.u))
-            
-            dy = (y1 - self.y0)
-            self.k = dy / self.du if abs(self.du) > 1e-12 else np.nan
-            self.den_norm = dy
-            
-            if not np.isfinite(self.k):
-                self.k = np.nan
+        """
+        Carrega t,u,y do .mat com busca robusta de chaves e limpeza básica.
+        Detecta degrau em u, calcula du, y0, dy, k. Sem fallback em mean(u).
+        Retorna True se k válido; False caso contrário.
+        """
+        def _as_1d(a):
+            a = np.asarray(a)
+            a = np.ravel(a)  # esmaga para 1D
+            return a.astype(float)
 
-            return True
+        def _find_first_key(dct, aliases):
+            for k in dct.keys():
+                lk = k.lower()
+                for a in aliases:
+                    if lk == a or lk.endswith(a):  # aceita 'dados/tiempo' etc.
+                        return k
+            return None
+
+        try:
+            # 1) tenta com scipy
+            data = sio.loadmat(filepath)
+        except NotImplementedError:
+            # v7.3 (HDF5): tente h5py se existir no seu ambiente
+            try:
+                import h5py
+                with h5py.File(filepath, "r") as f:
+                    # Crie um dicionário com datasets do topo
+                    data = {k: f[k][()] for k in f.keys()}
+            except Exception as e:
+                print(f"Erro ao ler .mat (v7.3?): {e}")
+                self.t = self.u = self.y = None
+                self.k = self.tau = self.theta = np.nan
+                return False
         except Exception as e:
-            print(f"Erro ao carregar dados: {e}")
-            self.t, self.u, self.y = None, None, None
-            self.k, self.tau, self.theta = np.nan, np.nan, np.nan
+            print(f"Erro ao ler .mat: {e}")
+            self.t = self.u = self.y = None
+            self.k = self.tau = self.theta = np.nan
             return False
+
+        # 2) tenta localizar t,u,y por vários nomes comuns
+        t_key = _find_first_key(data, ["tiempo", "tempo", "time", "t"])
+        u_key = _find_first_key(data, ["entrada", "input", "u"])
+        y_key = _find_first_key(data, ["salida", "output", "y"])
+
+        if t_key is None or u_key is None or y_key is None:
+            print(f"Chaves não encontradas. Achei: t={t_key}, u={u_key}, y={y_key}.")
+            self.t = self.u = self.y = None
+            self.k = self.tau = self.theta = np.nan
+            return False
+
+        # 3) converte para 1D e limpa NaNs
+        t = _as_1d(data[t_key])
+        u = _as_1d(data[u_key])
+        y = _as_1d(data[y_key])
+
+        # corta ao menor tamanho comum
+        n = min(len(t), len(u), len(y))
+        t, u, y = t[:n], u[:n], y[:n]
+
+        # remove NaNs
+        mask = np.isfinite(t) & np.isfinite(u) & np.isfinite(y)
+        t, u, y = t[mask], u[mask], y[mask]
+
+        if len(t) < 3:
+            print("Dados insuficientes após limpeza.")
+            self.t = self.u = self.y = None
+            self.k = self.tau = self.theta = np.nan
+            return False
+
+        # 4) garante tempo crescente e remove duplicados
+        sort_idx = np.argsort(t)
+        t, u, y = t[sort_idx], u[sort_idx], y[sort_idx]
+        # remove tempos repetidos mantendo o último
+        uniq_mask = np.concatenate(([True], np.diff(t) > 0))
+        t, u, y = t[uniq_mask], u[uniq_mask], y[uniq_mask]
+
+        # 5) detecta o degrau: maior |Δu|
+        du_vec = np.diff(u)
+        if len(du_vec) == 0:
+            print("Sinal de entrada muito curto para detectar degrau.")
+            self.t = self.u = self.y = None
+            self.k = self.tau = self.theta = np.nan
+            return False
+
+        step_idx = int(np.argmax(np.abs(du_vec)))
+        w_pre, w_post = 25, 25  # janelas
+
+        # níveis por mediana (robusto a ruído)
+        u0 = float(np.median(u[max(0, step_idx - w_pre): step_idx])) if step_idx > 0 else float(np.median(u[:w_pre]))
+        u1 = float(np.median(u[step_idx + 1: min(len(u), step_idx + 1 + w_post)])) if step_idx + 1 < len(u) else float(np.median(u[-w_post:]))
+
+        self.y0 = float(np.median(y[max(0, step_idx - w_pre): step_idx])) if step_idx > 0 else float(np.median(y[:w_pre]))
+        y1      = float(np.median(y[-w_post:]))
+
+        self.du       = u1 - u0
+        self.den_norm = y1 - self.y0  # dy
+
+        # tenta ampliar janelas se du ficou muito pequeno
+        eps = 1e-6
+        if abs(self.du) < eps:
+            w_pre2, w_post2 = 50, 50
+            u0b = float(np.median(u[max(0, step_idx - w_pre2): step_idx])) if step_idx > 0 else u0
+            u1b = float(np.median(u[step_idx + 1: min(len(u), step_idx + 1 + w_post2)])) if step_idx + 1 < len(u) else u1
+            self.du = u1b - u0b
+
+        if abs(self.du) < eps or abs(self.den_norm) < eps:
+            print(f"Degrau inválido: du={self.du:.3e}, dy={self.den_norm:.3e}.")
+            self.t = t; self.u = u; self.y = y
+            self.k = np.nan
+            return False
+
+        # 6) salva e retorna
+        self.t, self.u, self.y = t, u, y
+        self.k = self.den_norm / self.du
+        return np.isfinite(self.k)
+
 
     def run_identification(self):
         """
-        Calcula os parâmetros FOPDT pelos métodos de Smith e Sundaresan, 
-        selecionando o par (tau, theta) com o menor RMSE (EQM).
+        Estima (tau, theta) por Smith e Sundaresan & Krishnaswamy; escolhe por RMSE.
+        Fallback: modelo sem atraso (theta=0) usando 10–90%.
         """
         if self.t is None or not np.isfinite(self.k):
             return None
 
-        # --- 1. Método de Smith ---
-        t1_smith, t2_smith = self._time_at_norm(0.283), self._time_at_norm(0.632)
-        if np.isfinite(t1_smith) and np.isfinite(t2_smith):
-            tau_smith = 1.5 * (t2_smith - t1_smith)
-            theta_smith = t2_smith - tau_smith
+        # Smith (28.3% e 63.2%)
+        t1s, t2s = self._time_at_norm(0.283), self._time_at_norm(0.632)
+        if np.isfinite(t1s) and np.isfinite(t2s) and t2s > t1s:
+            tau_smith  = 1.5 * (t2s - t1s)
+            theta_smith = t2s - tau_smith
         else:
             tau_smith, theta_smith = np.nan, np.nan
-            
-        y_hat_smith = self._simulate_fopdt(self.k, tau_smith, theta_smith, self.t, self.y0, self.du)
-        rmse_smith = self._rmse(self.y, y_hat_smith)
-        
-        # --- 2. Método de Sundaresan & Krishnaswamy ---
-        t1_sun, t2_sun = self._time_at_norm(0.353), self._time_at_norm(0.853)
-        if np.isfinite(t1_sun) and np.isfinite(t2_sun):
-            tau_sun = (2/3) * (t2_sun - t1_sun)
-            theta_sun = 1.3 * t1_sun - 0.29 * t2_sun
+
+        y_hat_smith = self._simulate_fopdt(self.k, tau_smith, theta_smith, self.t, self.y0)
+        rmse_smith  = self._rmse(self.y, y_hat_smith)
+
+        # Sundaresan & Krishnaswamy (35.3% e 85.3%)
+        t1u, t2u = self._time_at_norm(0.353), self._time_at_norm(0.853)
+        if np.isfinite(t1u) and np.isfinite(t2u) and t2u > t1u:
+            tau_sun   = (2/3) * (t2u - t1u)
+            theta_sun = 1.3 * t1u - 0.29 * t2u
         else:
             tau_sun, theta_sun = np.nan, np.nan
-            
-        y_hat_sun = self._simulate_fopdt(self.k, tau_sun, theta_sun, self.t, self.y0, self.du)
-        rmse_sun = self._rmse(self.y, y_hat_sun)
 
-        # --- 3. Seleção do Modelo ---
-        # Escolhe o modelo com o menor erro (RMSE)
-        if rmse_smith <= rmse_sun:
-            self.tau, self.theta, self.method_id = tau_smith, theta_smith, "Smith"
-            best_rmse = rmse_smith
-        else:
-            self.tau, self.theta, self.method_id = tau_sun, theta_sun, "Sundaresan"
-            best_rmse = rmse_sun
+        y_hat_sun = self._simulate_fopdt(self.k, tau_sun, theta_sun, self.t, self.y0)
+        rmse_sun  = self._rmse(self.y, y_hat_sun)
 
-        # Invalida o modelo se os parâmetros finais não atenderem às condições (tau>0, theta>=0, finitos)
-        if not (np.isfinite(self.tau) and self.tau > 0 and np.isfinite(self.theta) and self.theta >= 0):
-             self.tau, self.theta, self.method_id = np.nan, np.nan, "Inválido"
-             best_rmse = np.inf
+        candidates = []
+        for name, tau_c, th_c, yhat_c, rmse_c in [
+            ("Smith", tau_smith, theta_smith, y_hat_smith, rmse_smith),
+            ("Sundaresan", tau_sun, theta_sun, y_hat_sun, rmse_sun),
+        ]:
+            if np.isfinite(tau_c) and tau_c > 0 and np.isfinite(th_c) and th_c >= 0:
+                candidates.append((rmse_c, name, tau_c, th_c, yhat_c))
 
-        y_model_final = self._simulate_fopdt(self.k, self.tau, self.theta, self.t, self.y0, self.du)
+        # Fallback sem atraso (theta=0) com tau por 10–90%
+        if not candidates:
+            t10, t90 = self._time_at_norm(0.10), self._time_at_norm(0.90)
+            if np.isfinite(t10) and np.isfinite(t90) and t90 > t10:
+                tau0, theta0 = (t90 - t10) / 2.2, 0.0
+                yhat0 = self._simulate_fopdt(self.k, tau0, theta0, self.t, self.y0)
+                rmse0 = self._rmse(self.y, yhat0)
+                candidates.append((rmse0, "SemAtraso(backup)", tau0, theta0, yhat0))
+            else:
+                return None
+
+        rmse, name, tau, theta, y_model_final = min(candidates, key=lambda x: x[0])
+        self.tau, self.theta, self.method_id = tau, theta, name
 
         return {
             'k': self.k,
             'tau': self.tau,
             'theta': self.theta,
-            'rmse': best_rmse,
+            'rmse': rmse,
             'method_id': self.method_id,
             'y_exp': self.y,
             't_exp': self.t,
             'y_model': y_model_final
         }
-        
+
+    # -------------------------------------------------------------------------
+    # Sintonias
+    # -------------------------------------------------------------------------
     def calculate_pid_tuning(self, method, lambda_val=None):
-        """Calcula os parâmetros Kp, Ti, Td com base na regra de sintonia FOPDT selecionada."""
-        
-        # Pré-condição: Modelo FOPDT deve ser válido
+        """Calcula Kp, Ti, Td conforme o método informado."""
         if not (np.isfinite(self.k) and self.tau > 0 and self.theta >= 0 and self.k != 0):
-             self.Kp, self.Ti, self.Td = 0.0, 0.0, 0.0
-             return 0.0, 0.0, 0.0
+            self.Kp, self.Ti, self.Td = 0.0, 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         k, tau, theta = self.k, self.tau, self.theta
         Kp, Ti, Td = np.nan, np.nan, np.nan
-        
-        # --- 1. Ziegler-Nichols Malha Aberta ---
+
         if method == "Ziegler-Nichols MA":
-            Kp = (1.2 * tau) / (k * theta)
-            Ti = 2 * theta
-            Td = theta / 2
-        
-        # --- 2. Método do Modelo Interno (IMC) ---
+            Kp = (1.2 * tau) / (k * theta); Ti = 2 * theta; Td = theta / 2
+
         elif method == "IMC":
-            lambda_val = lambda_val if lambda_val is not None and lambda_val > 0 else 1.0 
-            Kp = (2 * tau + theta) / (k * (2 * lambda_val + theta))
+            lam = lambda_val if (lambda_val is not None and lambda_val > 0) else 1.0
+            Kp = (2 * tau + theta) / (k * (2 * lam + theta))
             Ti = tau + theta / 2
             Td = (tau * theta) / (2 * tau + theta)
-        
-        # --- 3. Método CHR (Chien, Hrones e Reswick) ---
+
         elif method == "CHR sem Sobressinal":
-            Kp = (0.6 * tau) / (k * theta)
-            Ti = tau
-            Td = theta / 2
-            
+            Kp = (0.6 * tau) / (k * theta); Ti = tau; Td = theta / 2
+
         elif method == "CHR com Sobressinal":
-            # Projetado para 20% de overshoot
-            Kp = (0.95 * tau) / (k * theta)
-            Ti = 1.357 * tau
-            Td = 0.473 * theta
+            Kp = (0.95 * tau) / (k * theta); Ti = 1.357 * tau; Td = 0.473 * theta
 
-        # --- 4. Método ITAE (REQUISITO GRUPO 3) ---
         elif method == "ITAE":
-            # Usa correlações para minimizar o erro na resposta transitória
             A, B, C, D, E, F = self.ITAE_CONST
-            ratio = theta / tau
-            Kp = (A / k) * (ratio)**B
-            Ti = tau * (C + D * ratio)
-            Td = tau * E * (ratio)**F
+            r = theta / tau
+            Kp = (A / k) * (r)**B
+            Ti = tau * (C + D * r)
+            Td = tau * E * (r)**F
 
-        # --- 5. Método Cohen e Coon (CC) ---
         elif method == "Cohen e Coon":
-            # Kp = (1/k) * (16*tau + 3*theta) / (12*theta)
-            ratio = theta / tau
+            r = theta / tau
             Kp = (1 / k) * (16 * tau + 3 * theta) / (12 * theta)
-            # Ti = theta * (32 + 6*ratio) / (13 + 8*ratio)
-            Ti = theta * (32 + 6 * ratio) / (13 + 8 * ratio)
-            # Td = 4*theta / (11 + 2*ratio)
-            Td = 4 * theta / (11 + 2 * ratio)
+            Ti = theta * (32 + 6 * r) / (13 + 8 * r)
+            Td = 4 * theta / (11 + 2 * r)
 
-        # Armazena e retorna os valores IAL
         self.Kp, self.Ti, self.Td = Kp, Ti, Td
-        
         return Kp, Ti, Td
 
-
+    # -------------------------------------------------------------------------
+    # Simulações
+    # -------------------------------------------------------------------------
     def simulate_closed_loop(self, setpoint=1.0, k_p=None, t_i=None, t_d=None):
         """
-        Executa a simulação do sistema em malha fechada T(s) com os parâmetros PID fornecidos.
+        Simula T(s) = (Gc*Gp)/(1+Gc*Gp).
+        Retorna **resposta relativa (Δy)**: 0 → setpoint*dy (igual ao Colab).
         """
         if self.t is None or not np.isfinite(self.tau) or not np.isfinite(self.k):
             return None, None, None
-            
-        # Leitura dos parâmetros PID da IHM (ou usa os calculados se forem válidos)
-        Kp = k_p if k_p is not None and np.isfinite(k_p) else self.Kp
-        Ti = t_i if t_i is not None and t_i > 1e-6 and np.isfinite(t_i) else 1e-6 
-        Td = t_d if t_d is not None and np.isfinite(t_d) else self.Td
-        
-        self.Kp, self.Ti, self.Td = Kp, Ti, Td 
 
-        # 1. Função de transferência do Controlador Gc(s)
+        # Parâmetros PID (entrada da GUI ou últimos calculados)
+        Kp = k_p if (k_p is not None and np.isfinite(k_p)) else self.Kp
+        Ti = t_i if (t_i is not None and t_i > 1e-6 and np.isfinite(t_i)) else 1e-6
+        Td = t_d if (t_d is not None and np.isfinite(t_d)) else self.Td
+        self.Kp, self.Ti, self.Td = Kp, Ti, Td
+
+        # Controlador e planta (Padé de malha fechada = 1, como no Colab)
         Gc = self._get_pid_tf()
-
-        # 2. Função de transferência da Planta Gp(s)
-        G_process = tf([self.k], [self.tau, 1])
-        nd, dd = pade(self.theta, 1) 
-        Gd = tf(nd, dd)
-        Gp = G_process * Gd
-        
-        # 3. Função de transferência do Sistema em Malha Fechada T(s) = Gc*Gp / (1 + Gc*Gp)
+        Gp = tf([self.k], [self.tau, 1]) * tf(*pade(self.theta, self.pade_order_cl))
         T = feedback(Gc * Gp, 1)
 
-        # 4. Simulação da Resposta ao Degrau e escalamento pelo SetPoint
-        t_sim, y_cl = step_response(T, T=self.t)
-        y_cl *= setpoint
+        # Resposta unitária 0→1
+        t_sim, y_unit = step_response(T, T=self.t)
 
-        # 5. Cálculo das Métricas de Desempenho
-        metrics_data = self.calculate_metrics(t_sim, y_cl, setpoint)
-        
-        return t_sim, y_cl, metrics_data
-        
+        # Escala RELATIVA (Δy): alvo = setpoint*dy
+        y_final_rel = self.den_norm * setpoint
+        y_cl_rel    = y_final_rel * y_unit
+
+        # Métricas em coordenadas relativas
+        metrics_data = self.calculate_metrics(t_sim, y_cl_rel, y_final_rel)
+        return t_sim, y_cl_rel, metrics_data
+
+    # -------------------------------------------------------------------------
+    # Métricas
+    # -------------------------------------------------------------------------
     def calculate_metrics(self, t, y, y_final):
         """
-        Calcula as métricas de desempenho (tr, ts, Mp, ess) da resposta ao degrau.
+        Calcula tr (10–90%), ts (±2%), Mp (%) e ess, assumindo referência = y_final.
+        Funciona tanto para relativo (y_final=Δy) quanto para absoluto (y_final=valor final).
         """
         if y is None or y_final is None or len(y) == 0 or not np.any(np.isfinite(y)):
             return {'tr': np.nan, 'ts': np.nan, 'Mp': np.nan, 'ess': np.nan}
 
-        # 1. Erro em Regime Permanente (ess)
         yss = y[-1]
         ess = abs(y_final - yss)
 
-        # 2. Tempo de Subida (tr): 10% a 90%
         t10 = t[np.where(y >= 0.1 * y_final)[0][0]] if np.any(y >= 0.1 * y_final) else np.nan
         t90 = t[np.where(y >= 0.9 * y_final)[0][0]] if np.any(y >= 0.9 * y_final) else np.nan
         tr = t90 - t10 if np.isfinite(t10) and np.isfinite(t90) else np.nan
 
-        # 3. Overshoot (Mp %):
         Mp_value = np.max(y)
-        Mp = (Mp_value - y_final) / y_final * 100.0 if y_final != 0 and Mp_value > y_final else 0.0
-        
-        # 4. Tempo de Acomodação (ts): ±2%
-        banda = 0.02 * y_final
-        ts = np.nan
-        
-        # Busca o primeiro instante onde a resposta entra e permanece dentro da banda de 2%
-        idx_in_band = np.where(np.abs(y - y_final) <= banda)[0]
-        
-        if len(idx_in_band) > 0:
-            for i in idx_in_band:
-                if np.all(np.abs(y[i:] - y_final) <= banda):
-                    ts = t[i]
-                    break
-        
-        return {
-            'tr': tr,
-            'ts': ts,
-            'Mp': Mp,
-            'ess': ess
-        }
+        Mp = (Mp_value - y_final) / y_final * 100.0 if (y_final != 0 and Mp_value > y_final) else 0.0
+
+        band = 0.02 * abs(y_final)
+        outside = np.where(np.abs(y - y_final) > band)[0]
+        ts = (t[outside[-1] + 1] if len(outside) and outside[-1] + 1 < len(t) else (t[-1] if len(outside) else t[0]))
+
+        return {'tr': tr, 'ts': ts, 'Mp': Mp, 'ess': ess}
