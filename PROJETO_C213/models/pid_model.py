@@ -6,6 +6,8 @@ class PIDModel:
     """
     Model (Camada M - Modelo).
     Carrega dados, identifica FOPDT, calcula sintonias e simula respostas.
+    - Identificação: gráficos ABSOLUTOS (começam em y0 e vão a y0+dy)
+    - Controle PID (CHR/ITAE): resposta RELATIVA (Δy), com SP ABSOLUTO convertido p/ Δ
     """
 
     def __init__(self, pade_id: int = 10, pade_cl: int = 1):
@@ -19,8 +21,8 @@ class PIDModel:
         self.method_id = "N/A"
 
         # Ordem do Padé (identificação/aberta e fechada)
-        self.pade_order_id = pade_id           # p/ identificação e malha aberta (10)
-        self.pade_order_cl = pade_cl           # p/ malha fechada (1 - igual ao Colab)
+        self.pade_order_id = pade_id           # identificação/malha aberta (10)
+        self.pade_order_cl = pade_cl           # malha fechada (1)
 
         # Últimos parâmetros PID
         self.Kp, self.Ti, self.Td = 0.0, 0.0, 0.0
@@ -42,7 +44,7 @@ class PIDModel:
     def _simulate_fopdt(self, k, tau, theta, t_data, y0):
         """
         Simula Gp(s) = (k/(tau*s+1))*e^{-theta s} para passo unitário.
-        Saída com DC correto: y0 + dy*(y_step/k).
+        Retorna saída ABSOLUTA com DC correto: y0 + dy*(y_step/k).
         """
         if not (np.isfinite(k) and np.isfinite(tau) and np.isfinite(theta)) or tau <= 0 or theta < 0:
             return np.full_like(t_data, np.nan, dtype=float)
@@ -86,7 +88,7 @@ class PIDModel:
         """
         def _as_1d(a):
             a = np.asarray(a)
-            a = np.ravel(a)  # esmaga para 1D
+            a = np.ravel(a)  # 1D
             return a.astype(float)
 
         def _find_first_key(dct, aliases):
@@ -98,14 +100,12 @@ class PIDModel:
             return None
 
         try:
-            # 1) tenta com scipy
             data = sio.loadmat(filepath)
         except NotImplementedError:
-            # v7.3 (HDF5): tente h5py se existir no seu ambiente
+            # v7.3 (HDF5)
             try:
                 import h5py
                 with h5py.File(filepath, "r") as f:
-                    # Crie um dicionário com datasets do topo
                     data = {k: f[k][()] for k in f.keys()}
             except Exception as e:
                 print(f"Erro ao ler .mat (v7.3?): {e}")
@@ -118,7 +118,7 @@ class PIDModel:
             self.k = self.tau = self.theta = np.nan
             return False
 
-        # 2) tenta localizar t,u,y por vários nomes comuns
+        # Localiza chaves
         t_key = _find_first_key(data, ["tiempo", "tempo", "time", "t"])
         u_key = _find_first_key(data, ["entrada", "input", "u"])
         y_key = _find_first_key(data, ["salida", "output", "y"])
@@ -129,16 +129,14 @@ class PIDModel:
             self.k = self.tau = self.theta = np.nan
             return False
 
-        # 3) converte para 1D e limpa NaNs
+        # 1D e limpeza
         t = _as_1d(data[t_key])
         u = _as_1d(data[u_key])
         y = _as_1d(data[y_key])
 
-        # corta ao menor tamanho comum
         n = min(len(t), len(u), len(y))
         t, u, y = t[:n], u[:n], y[:n]
 
-        # remove NaNs
         mask = np.isfinite(t) & np.isfinite(u) & np.isfinite(y)
         t, u, y = t[mask], u[mask], y[mask]
 
@@ -148,14 +146,13 @@ class PIDModel:
             self.k = self.tau = self.theta = np.nan
             return False
 
-        # 4) garante tempo crescente e remove duplicados
+        # Tempo crescente e sem duplicados
         sort_idx = np.argsort(t)
         t, u, y = t[sort_idx], u[sort_idx], y[sort_idx]
-        # remove tempos repetidos mantendo o último
         uniq_mask = np.concatenate(([True], np.diff(t) > 0))
         t, u, y = t[uniq_mask], u[uniq_mask], y[uniq_mask]
 
-        # 5) detecta o degrau: maior |Δu|
+        # Degrau em u: maior |Δu|
         du_vec = np.diff(u)
         if len(du_vec) == 0:
             print("Sinal de entrada muito curto para detectar degrau.")
@@ -164,9 +161,8 @@ class PIDModel:
             return False
 
         step_idx = int(np.argmax(np.abs(du_vec)))
-        w_pre, w_post = 25, 25  # janelas
+        w_pre, w_post = 25, 25
 
-        # níveis por mediana (robusto a ruído)
         u0 = float(np.median(u[max(0, step_idx - w_pre): step_idx])) if step_idx > 0 else float(np.median(u[:w_pre]))
         u1 = float(np.median(u[step_idx + 1: min(len(u), step_idx + 1 + w_post)])) if step_idx + 1 < len(u) else float(np.median(u[-w_post:]))
 
@@ -176,7 +172,7 @@ class PIDModel:
         self.du       = u1 - u0
         self.den_norm = y1 - self.y0  # dy
 
-        # tenta ampliar janelas se du ficou muito pequeno
+        # Janela maior se du pequeno
         eps = 1e-6
         if abs(self.du) < eps:
             w_pre2, w_post2 = 50, 50
@@ -190,11 +186,9 @@ class PIDModel:
             self.k = np.nan
             return False
 
-        # 6) salva e retorna
         self.t, self.u, self.y = t, u, y
         self.k = self.den_norm / self.du
         return np.isfinite(self.k)
-
 
     def run_identification(self):
         """
@@ -303,12 +297,13 @@ class PIDModel:
         return Kp, Ti, Td
 
     # -------------------------------------------------------------------------
-    # Simulações
+    # Simulações (Controle PID - CHR/ITAE em Δy com SP absoluto convertido)
     # -------------------------------------------------------------------------
     def simulate_closed_loop(self, setpoint=1.0, k_p=None, t_i=None, t_d=None):
         """
-        Simula T(s) = (Gc*Gp)/(1+Gc*Gp).
-        Retorna **resposta relativa (Δy)**: 0 → setpoint*dy (igual ao Colab).
+        Simula T(s) = (Gc*Gp)/(1+Gc*Gp) para a aba Controle PID.
+        Retorna **resposta relativa (Δy)**: 0 → (SP_abs - y0).
+        O campo SP na GUI é ABSOLUTO; aqui convertemos para Δ.
         """
         if self.t is None or not np.isfinite(self.tau) or not np.isfinite(self.k):
             return None, None, None
@@ -321,15 +316,19 @@ class PIDModel:
 
         # Controlador e planta (Padé de malha fechada = 1, como no Colab)
         Gc = self._get_pid_tf()
-        Gp = tf([self.k], [self.tau, 1]) * tf(*pade(self.theta, self.pade_order_cl))
+        nd, dd = pade(self.theta, self.pade_order_cl)       # 1
+        Gp = tf([self.k], [self.tau, 1]) * tf(nd, dd)
         T = feedback(Gc * Gp, 1)
 
         # Resposta unitária 0→1
         t_sim, y_unit = step_response(T, T=self.t)
 
-        # Escala RELATIVA (Δy): alvo = setpoint*dy
-        y_final_rel = self.den_norm * setpoint
-        y_cl_rel    = y_final_rel * y_unit
+        # Converte SP ABSOLUTO da GUI para Δ-alvo
+        if setpoint is None or not np.isfinite(setpoint):
+            setpoint = self.y0 + self.den_norm              # default = final experimental
+
+        y_final_rel = (setpoint - self.y0)                  # Δ-alvo
+        y_cl_rel    = y_final_rel * y_unit                  # 0 → (SP - y0)
 
         # Métricas em coordenadas relativas
         metrics_data = self.calculate_metrics(t_sim, y_cl_rel, y_final_rel)
